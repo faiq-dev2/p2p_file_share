@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>P2P File Share</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --accent: #4f46e5;
+      --accent-light: #6366f1;
+      --bg: #f9fafb;
+      --card-bg: rgba(255, 255, 255, 0.9);
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: linear-gradient(135deg, var(--accent-light), #06b6d4);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      padding: 20px;
+    }
+    .watermark{
+      /* background-color: #254a8960; */
+      /* border: 1px solid #254989; */
+      color: #254989;
+      padding: 0.5rem;
+      border-radius: 2rem;
+      font-size: 12px;
+      /* margin-left: -85%; */
+    }
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border-radius: 20px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+      padding: 30px;
+      width: 100%;
+      max-width: 500px;
+      text-align: center;
+      animation: fadeIn 0.6s ease;
+    }
+
+    @keyframes fadeIn {
+      from {opacity: 0; transform: translateY(10px);}
+      to {opacity: 1; transform: translateY(0);}
+    }
+
+    h2 {
+      margin-top: 0;
+      color: var(--accent);
+    }
+
+    input, button {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 15px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      margin-top: 8px;
+      transition: all 0.2s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
+    }
+
+    button {
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      border: none;
+      font-weight: 600;
+    }
+
+    button:hover { background: var(--accent-light); }
+
+    .id-box {
+      background: #eef2ff;
+      color: var(--accent);
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+
+    #progress {
+      width: 100%;
+      height: 12px;
+      background: #e5e7eb;
+      border-radius: 6px;
+      margin: 16px 0;
+      overflow: hidden;
+    }
+
+    #bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-light));
+      transition: width 0.2s;
+    }
+
+    #log {
+      background: #f3f4f6;
+      border-radius: 8px;
+      padding: 10px;
+      text-align: left;
+      font-size: 13px;
+      height: 120px;
+      overflow-y: auto;
+      margin-top: 10px;
+    }
+
+    .file-section {
+      border: 2px dashed #cbd5e1;
+      padding: 16px;
+      border-radius: 10px;
+      background: #fafafa;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+   
+    <h2>📡 P2P File Share</h2>
+    <div class="id-box">My ID: <span id="myid">-</span></div>
+
+    <input id="remoteId" placeholder="Enter receiver peer ID" />
+    <button id="connectBtn">🔗 Connect</button>
+
+    <div class="file-section">
+      <input type="file" id="fileInput" />
+      <button id="sendBtn" disabled>📤 Send File</button>
+    </div>
+
+    <div id="progress"><div id="bar"></div></div>
+
+    <div id="log"></div>
+     <span class="watermark">Developed by Faiq</span>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let pc, dc;
+    const cfg = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    const myidEl = document.getElementById('myid');
+    const remoteIdInput = document.getElementById('remoteId');
+    const connectBtn = document.getElementById('connectBtn');
+    const fileInput = document.getElementById('fileInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const bar = document.getElementById('bar');
+    const log = msg => {
+      const el = document.getElementById('log');
+      el.innerHTML += `➡️ ${msg}<br>`;
+      el.scrollTop = el.scrollHeight;
+    };
+
+    socket.on('connect', () => socket.emit('join'));
+    socket.on('id', id => myidEl.textContent = id);
+
+    socket.on('signal', async ({ from, data }) => {
+      if (!pc) await createPeer(false);
+      if (data.sdp) {
+        await pc.setRemoteDescription(data.sdp);
+        if (data.sdp.type === 'offer') {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit('signal', { to: from, data: { sdp: pc.localDescription } });
+        }
+      } else if (data.candidate) {
+        await pc.addIceCandidate(data.candidate);
+      }
+    });
+
+    connectBtn.onclick = async () => {
+      const remote = remoteIdInput.value.trim();
+      if (!remote) return alert('Enter remote ID');
+      await createPeer(true);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('signal', { to: remote, data: { sdp: pc.localDescription } });
+      log('Connecting to peer...');
+    };
+
+    async function createPeer(isInitiator) {
+      pc = new RTCPeerConnection(cfg);
+      pc.onicecandidate = e => {
+        if (e.candidate) {
+          const to = remoteIdInput.value.trim();
+          if (to) socket.emit('signal', { to, data: { candidate: e.candidate } });
+        }
+      };
+      if (isInitiator) {
+        dc = pc.createDataChannel('file');
+        setupDataChannel();
+      } else {
+        pc.ondatachannel = ev => {
+          dc = ev.channel;
+          setupDataChannel();
+        };
+      }
+      pc.onconnectionstatechange = () => log('State: ' + pc.connectionState);
+    }
+
+    function setupDataChannel() {
+      dc.binaryType = 'arraybuffer';
+      dc.onopen = () => { log('✅ Connected to peer'); sendBtn.disabled = false; };
+      dc.onclose = () => { log('❌ Connection closed'); sendBtn.disabled = true; };
+
+      let fileMeta = null, chunks = [], received = 0;
+      dc.onmessage = ev => {
+        if (typeof ev.data === 'string') {
+          try {
+            const meta = JSON.parse(ev.data);
+            if (meta.type === 'meta') {
+              fileMeta = meta;
+              chunks = [];
+              received = 0;
+              log('Receiving file: ' + meta.name);
+            }
+          } catch {}
+        } else {
+          chunks.push(ev.data);
+          received += ev.data.byteLength;
+          bar.style.width = (100 * received / fileMeta.size) + '%';
+          if (received >= fileMeta.size) {
+            const blob = new Blob(chunks);
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = fileMeta.name;
+            a.textContent = '⬇️ Download ' + fileMeta.name;
+            a.style.display = 'block';
+            a.style.marginTop = '10px';
+            document.querySelector('.card').appendChild(a);
+            log('✅ File received!');
+          }
+        }
+      };
+    }
+
+    sendBtn.onclick = async () => {
+      const file = fileInput.files[0];
+      if (!file) return alert('Select file first');
+      dc.send(JSON.stringify({ type: 'meta', name: file.name, size: file.size }));
+      const chunkSize = 64 * 1024;
+      let offset = 0;
+      while (offset < file.size) {
+        const slice = file.slice(offset, offset + chunkSize);
+        const buf = await slice.arrayBuffer();
+        dc.send(buf);
+        offset += buf.byteLength;
+        bar.style.width = (100 * offset / file.size) + '%';
+      }
+      log('✅ File sent: ' + file.name);
+    };
+  </script>
+</body>
+</html>
